@@ -3,6 +3,9 @@
 This module provides classes for querying Google Scholar and parsing
 returned results. It currently *only* processes the first results
 page. It is not a recursive crawler.
+
+Example usage:
+python .\scholar.py --csv --csv-header --author="Taylor T Johnson" > taylor-2019-02-08.txt
 """
 # ChangeLog
 # ---------
@@ -140,7 +143,7 @@ page. It is not a recursive crawler.
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
 # met:
-#
+# 
 #    1. Redistributions of source code must retain the above copyright
 #       notice, this list of conditions and the following disclaimer.
 #
@@ -242,6 +245,8 @@ class ScholarConf(object):
     LOG_LEVEL = 1
     MAX_PAGE_RESULTS = 10 # Current default for per-page results
     SCHOLAR_SITE = 'http://scholar.google.com'
+#    SCHOLAR_SITE = 'https://scholar.google.com/citations?user=MdTkXNYAAAAJ'
+
 
     # USER_AGENT = 'Mozilla/5.0 (X11; U; FreeBSD i386; en-US; rv:1.9.2.9) Gecko/20100913 Firefox/3.6.9'
     # Let's update at this point (3/14):
@@ -344,7 +349,7 @@ class ScholarArticle(object):
         res = []
         if header:
             res.append(sep.join(keys))
-        res.append(sep.join([unicode(self.attrs[key][0]) for key in keys]))
+        res.append(sep.join(['"' + unicode(self.attrs[key][0]) + '"' for key in keys]))
         return '\n'.join(res)
 
     def as_citation(self):
@@ -398,6 +403,8 @@ class ScholarArticleParser(object):
             self._clean_article()
             if self.article['title']:
                 self.handle_article(self.article)
+            #break
+        
 
     def _clean_article(self):
         """
@@ -409,9 +416,15 @@ class ScholarArticleParser(object):
             self.article['title'] = self.article['title'].strip()
 
     def _parse_globals(self):
-        tag = self.soup.find(name='div', attrs={'id': 'gs_ab_md'})
+#        tag = self.soup.find(name='div', attrs={'id': 'gs_ab_md'})
+#class="gsc_rsb_std"
+    tag = self.soup.find(name='td', attrs={'class': 'gsc_rsb_std'})
+    print tag
         if tag is not None:
             raw_text = tag.findAll(text=True)
+            print raw_text[0] # total citations
+            print tag
+            
             # raw text is a list because the body contains <b> etc
             if raw_text is not None and len(raw_text) > 0:
                 try:
@@ -423,6 +436,25 @@ class ScholarArticleParser(object):
                     self.handle_num_results(num_results)
                 except (IndexError, ValueError):
                     pass
+ 
+        tag = self.soup.find(name='div', attrs={'class': 'gsc_md_hist_b'})
+        #print tag
+        raw_text = tag.findAll(text=True)
+        print raw_text
+        numYears = len(raw_text)
+        
+        i = 0
+        for r in raw_text:
+            print r
+            print raw_text[numYears/2 + i]
+            i = i + 1
+            if i >= numYears/2:
+                break
+        
+    #tag = self.soup.find(name='span', attrs={'class': 'gsc_g_al'})
+        #print tag
+        #raw_text = tag.findAll(text=True)
+        #print raw_text
 
     def _parse_article(self, div):
         self.article = ScholarArticle()
@@ -500,8 +532,8 @@ class ScholarArticleParser(object):
 
     @staticmethod
     def _tag_results_checker(tag):
-        return tag.name == 'div' \
-            and ScholarArticleParser._tag_has_class(tag, 'gs_r')
+        return tag.name == 'tr' \
+            and ScholarArticleParser._tag_has_class(tag, 'gsc_a_tr')
 
     @staticmethod
     def _as_int(obj):
@@ -564,7 +596,46 @@ class ScholarArticleParser120726(ScholarArticleParser):
     def _parse_article(self, div):
         self.article = ScholarArticle()
 
+    i_row = 0
+    print div
         for tag in div:
+            print "EACH TAG:\n\r"
+            print tag
+            
+            if tag.name == 'td' and i_row == 0: #tag.class == 'gsc_a_t':
+                raw_t = tag.findAll(text=True)
+                print raw_t
+                print tag
+                #print raw_t
+                #print raw_t[1]
+                #print raw_t[2]
+                #print raw_t[3]
+                self.article['title'] = raw_t[0]
+                self.article['author'] = raw_t[1]
+                if len(raw_t) >= 3:
+                    self.article['journal'] = raw_t[2]
+                if len(raw_t) >= 4:
+                    self.article['year'] = raw_t[3]
+            elif tag.name == 'td' and i_row == 1:
+                raw_t = tag.findAll(text=True)
+                if len(raw_t) > 0:
+                    self.article['num_citations'] = raw_t[0]
+                else:
+                    self.article['num_citations'] = 0
+            elif tag.name == 'td' and i_row == 2:
+                raw_t = tag.findAll(text=True)
+            if raw_t is not None and len(raw_t) >= 1:
+                self.article['year'] = raw_t[0]
+            if self.article['year'] is not None:
+                str_year = self.article['year']
+                if len(str_year) > 4:
+                    self.article['year'] = str_year[-4];
+
+            i_row = i_row + 1
+            
+            continue
+            
+            
             if not hasattr(tag, 'name'):
                 continue
             if str(tag).lower().find('.pdf'):
@@ -745,20 +816,24 @@ class SearchScholarQuery(ScholarQuery):
     This version represents the search query parameters the user can
     configure on the Scholar website, in the advanced search options.
     """
-    SCHOLAR_QUERY_URL = ScholarConf.SCHOLAR_SITE + '/scholar?' \
-        + 'as_q=%(words)s' \
-        + '&as_epq=%(phrase)s' \
-        + '&as_oq=%(words_some)s' \
-        + '&as_eq=%(words_none)s' \
-        + '&as_occt=%(scope)s' \
-        + '&as_sauthors=%(authors)s' \
-        + '&as_publication=%(pub)s' \
-        + '&as_ylo=%(ylo)s' \
-        + '&as_yhi=%(yhi)s' \
-        + '&as_vis=%(citations)s' \
-        + '&btnG=&hl=en' \
-        + '%(num)s' \
-        + '&as_sdt=%(patents)s%%2C5'
+#    https://scholar.google.com/
+# https://scholar.google.com/citations?hl=en&user=MdTkXNYAAAAJ&pagesize=100&view_op=list_works&sortby=pubdate
+    SCHOLAR_QUERY_URL = ScholarConf.SCHOLAR_SITE + '/citations?hl=en&user=MdTkXNYAAAAJ&pagesize=100&view_op=list_works&sortby=pubdate'    
+#    SCHOLAR_QUERY_URL = ScholarConf.SCHOLAR_SITE + '/citations?user=MdTkXNYAAAAJ'
+    #\
+    #    + 'as_q=%(words)s' \
+    #    + '&as_epq=%(phrase)s' \
+    #    + '&as_oq=%(words_some)s' \
+    #    + '&as_eq=%(words_none)s' \
+    #    + '&as_occt=%(scope)s' \
+    #    + '&as_sauthors=%(authors)s' \
+    #    + '&as_publication=%(pub)s' \
+    #    + '&as_ylo=%(ylo)s' \
+    #    + '&as_yhi=%(yhi)s' \
+    #    + '&as_vis=%(citations)s' \
+    #    + '&btnG=&hl=en' \
+    #    + '%(num)s' \
+    #    + '&as_sdt=%(patents)s%%2C5'
 
     def __init__(self):
         ScholarQuery.__init__(self)
@@ -773,6 +848,7 @@ class SearchScholarQuery(ScholarQuery):
         self.timeframe = [None, None]
         self.include_patents = True
         self.include_citations = True
+        
 
     def set_words(self, words):
         """Sets words that *all* must be found in the result."""
@@ -861,7 +937,6 @@ class SearchScholarQuery(ScholarQuery):
         # server will not recognize them:
         urlargs['num'] = ('&num=%d' % self.num_results
                           if self.num_results is not None else '')
-
         return self.SCHOLAR_QUERY_URL % urlargs
 
 
@@ -1017,6 +1092,8 @@ class ScholarQuerier(object):
         """
         self.clear_articles()
         self.query = query
+        
+        print query.get_url()
 
         html = self._get_http_response(url=query.get_url(),
                                        log_msg='dump of query response HTML',
@@ -1132,7 +1209,7 @@ def txt(querier, with_globals):
     for art in articles:
         print(encode(art.as_txt()) + '\n')
 
-def csv(querier, header=False, sep='|'):
+def csv(querier, header=False, sep=','):
     articles = querier.articles
     for art in articles:
         result = art.as_csv(header=header, sep=sep)
